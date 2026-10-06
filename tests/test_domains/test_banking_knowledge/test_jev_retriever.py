@@ -104,3 +104,45 @@ def test_repeated_query_is_served_from_cache():
 def test_empty_query_makes_no_requests():
     retriever = _retriever(lambda request: pytest.fail("unexpected request"))
     assert retriever.retrieve({"query": "  "}, STATE) == []
+
+
+def test_alltools_jev_swaps_only_the_dense_tool():
+    from unittest.mock import MagicMock, patch
+
+    from tau2.domains.banking_knowledge.data_model import TransactionalDB
+    from tau2.domains.banking_knowledge.environment import get_knowledge_base
+    from tau2.domains.banking_knowledge.retrieval import (
+        build_policy,
+        build_tools,
+        resolve_variant,
+    )
+
+    docs = [
+        {"id": d, "title": STATE["doc_title_map"][d], "text": text}
+        for d, text in STATE["doc_content_map"].items()
+    ]
+    with (
+        patch(
+            "tau2.domains.banking_knowledge.retrieval.get_or_create_docs",
+            return_value=docs,
+        ),
+        patch("tau2.domains.banking_knowledge.retrieval._create_sandbox"),
+    ):
+        tools = build_tools(
+            resolve_variant("alltools-jev"), MagicMock(spec=TransactionalDB), None
+        )
+    assert {"KB_search_bm25", "KB_search_jev", "shell"} <= set(tools.get_tools())
+    assert not tools.has_tool("KB_search_dense")
+
+    retriever = tools._kb_jev_pipeline.retrievers[0]
+    retriever.api_key = "test-key"
+    retriever.client = httpx.Client(transport=httpx.MockTransport(_answer))
+    output = tools.KB_search_jev(query="annual fee", k=1)
+    assert output.startswith("1. Gold Card Fees") and "Savings Rates" not in output
+
+    kb = get_knowledge_base()
+    alltools = build_policy(resolve_variant("alltools"), kb).splitlines()
+    alltools_jev = build_policy(resolve_variant("alltools-jev"), kb).splitlines()
+    changed = [(a, b) for a, b in zip(alltools, alltools_jev) if a != b]
+    assert len(alltools) == len(alltools_jev) and len(changed) == 2
+    assert all("KB_search_dense" in a and "KB_search_jev" in b for a, b in changed)

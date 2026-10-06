@@ -37,6 +37,7 @@ Requirements: **sandbox-runtime** for `shell`, and an embedding API for dense se
 | `terminal_use_write` | `shell` | `sandbox-runtime` (see below) |
 | `alltools` | `KB_search_bm25`, `KB_search_dense`, `shell` | BM25 offline + OpenAI dense embeddings + sandbox-runtime |
 | `alltools-qwen` | `KB_search_bm25`, `KB_search_dense`, `shell` | BM25 offline + Qwen dense embeddings + sandbox-runtime |
+| `alltools-jev` | `KB_search_bm25`, `KB_search_jev`, `shell` | `alltools` with the dense search replaced by TypeSafe Jev relevance search (`TYPESAFE_API_KEY`) + sandbox-runtime |
 
 The `bm25`, `openai_embeddings`, and `qwen_embeddings` configs can also be combined with:
 - `_reranker` suffix — adds an LLM reranker postprocessor (requires `OPENAI_API_KEY`)

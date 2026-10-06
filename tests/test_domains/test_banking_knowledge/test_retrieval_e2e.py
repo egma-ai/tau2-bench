@@ -35,6 +35,10 @@ requires_sandbox_runtime = pytest.mark.skipif(
     shutil.which("srt") is None,
     reason="sandbox-runtime (srt) is not installed",
 )
+requires_all_tools_jev_deps = pytest.mark.skipif(
+    not os.environ.get("TYPESAFE_API_KEY") or shutil.which("srt") is None,
+    reason="alltools-jev requires TYPESAFE_API_KEY and sandbox-runtime (srt)",
+)
 requires_all_tools_deps = pytest.mark.skipif(
     not os.environ.get("OPENAI_API_KEY") or shutil.which("srt") is None,
     reason="alltools requires OPENAI_API_KEY and sandbox-runtime (srt)",
@@ -133,6 +137,11 @@ _ALL_VARIANTS = [
         {"KB_search_bm25", "KB_search_dense", "shell"},
         "all_tools",
     ),
+    (
+        "alltools-jev",
+        {"KB_search_bm25", "KB_search_jev", "shell"},
+        "all_tools_jev",
+    ),
 ]
 
 
@@ -147,6 +156,8 @@ def _api_mark(gate):
         return requires_sandbox_runtime
     if gate == "all_tools":
         return requires_all_tools_deps
+    if gate == "all_tools_jev":
+        return requires_all_tools_jev_deps
     return pytest.mark.skipif(False, reason="")
 
 
@@ -225,6 +236,7 @@ class TestAllVariantsToolPresence:
             "KB_search",
             "KB_search_bm25",
             "KB_search_dense",
+            "KB_search_jev",
             "grep",
             "shell",
         }

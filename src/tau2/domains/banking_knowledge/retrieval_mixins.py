@@ -145,6 +145,23 @@ class KBSearchDenseAllToolsMixin(metaclass=ToolKitType):
         return _run_kb_search(self._kb_dense_pipeline, query, top_k=k)
 
 
+class KBSearchJevAllToolsMixin(metaclass=ToolKitType):
+    """Jev relevance search for AllTools-Jev; expects ``self._kb_jev_pipeline``."""
+
+    @is_tool(ToolType.READ)
+    def KB_search_jev(self, query: str, k: int = 10) -> str:
+        """Search the knowledge base by having TypeSafe Jev check every document for relevance.
+
+        Args:
+            query: The search query to find relevant documents.
+            k: Maximum number of documents to return (default 10).
+
+        Returns:
+            Relevant document excerpts matching the query.
+        """
+        return _run_kb_search(self._kb_jev_pipeline, query, top_k=k)
+
+
 class ShellMixin(metaclass=ToolKitType):
     """MixIn that provides the shell tool.
 

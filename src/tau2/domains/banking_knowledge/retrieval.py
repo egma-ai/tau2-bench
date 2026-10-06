@@ -31,6 +31,7 @@ from typing import (
 from tau2.domains.banking_knowledge.data_model import KnowledgeBase, TransactionalDB
 from tau2.domains.banking_knowledge.retrieval_toolkits import (
     KnowledgeToolsAllTools,
+    KnowledgeToolsAllToolsJev,
     KnowledgeToolsPlain,
     KnowledgeToolsWithGrep,
     KnowledgeToolsWithKBSearch,
@@ -419,6 +420,7 @@ class RetrievalVariant:
     kb_search: Optional[PipelineSpec] = None  # None -> no KB_search tool
     kb_search_bm25: Optional[PipelineSpec] = None  # AllTools: BM25 KB_search_bm25
     kb_search_dense: Optional[PipelineSpec] = None  # AllTools: dense KB_search_dense
+    kb_search_jev: Optional[PipelineSpec] = None  # AllTools-Jev: Jev KB_search_jev
     grep: Optional[GrepSpec] = None  # None -> no grep tool
     shell: Optional[ShellSpec] = None  # None -> no shell tool
     supports_top_k: bool = False
@@ -628,6 +630,15 @@ RETRIEVAL_VARIANTS: Dict[str, RetrievalVariant] = {
         embedder_type="openrouter",
         embedder_model=DEFAULT_DENSE_EMBEDDING_MODEL_OPENROUTER,
     ),
+    # AllTools with KB_search_dense (embeddings) swapped for KB_search_jev.
+    "alltools-jev": RetrievalVariant(
+        name="alltools-jev",
+        prompt_template=PROMPTS_DIR / "all_tools_jev.md",
+        build_prompt=standard_prompt,
+        kb_search_bm25=PipelineSpec(type="bm25"),
+        kb_search_jev=PipelineSpec(type="jev"),
+        shell=ShellSpec(allow_writes=False),
+    ),
 }
 
 RETRIEVAL_VARIANT_ALIASES = {
@@ -695,6 +706,8 @@ def resolve_variant(
         variant.kb_search_bm25.top_k = top_k
     if top_k is not None and variant.kb_search_dense is not None:
         variant.kb_search_dense.top_k = top_k
+    if top_k is not None and variant.kb_search_jev is not None:
+        variant.kb_search_jev.top_k = top_k
     if grep_top_k is not None and variant.grep is not None:
         variant.grep.top_k = grep_top_k
     if case_sensitive is not None and variant.grep is not None:
@@ -789,7 +802,12 @@ def build_tools(
         and variant.kb_search_dense is not None
         and variant.shell is not None
     )
-    if has_all_tools:
+    if variant.kb_search_jev is not None:
+        bm25_pipeline = _create_kb_pipeline(variant.kb_search_bm25, knowledge_base)
+        jev_pipeline = _create_kb_pipeline(variant.kb_search_jev, knowledge_base)
+        sandbox = _create_sandbox(knowledge_base, variant.shell)
+        tools = KnowledgeToolsAllToolsJev(db, bm25_pipeline, jev_pipeline, sandbox)
+    elif has_all_tools:
         bm25_pipeline = _create_kb_pipeline(variant.kb_search_bm25, knowledge_base)
         dense_pipeline = _create_kb_pipeline(variant.kb_search_dense, knowledge_base)
         sandbox = _create_sandbox(knowledge_base, variant.shell)

@@ -20,6 +20,7 @@ from tau2.domains.banking_knowledge.retrieval_mixins import (
     GrepMixin,
     KBSearchBm25AllToolsMixin,
     KBSearchDenseAllToolsMixin,
+    KBSearchJevAllToolsMixin,
     KBSearchMixin,
     ShellMixin,
 )
@@ -109,4 +110,25 @@ class KnowledgeToolsAllTools(
         super().__init__(db)
         self._kb_bm25_pipeline = kb_bm25_pipeline
         self._kb_dense_pipeline = kb_dense_pipeline
+        self._sandbox = sandbox
+
+
+class KnowledgeToolsAllToolsJev(
+    KBSearchBm25AllToolsMixin,
+    KBSearchJevAllToolsMixin,
+    ShellMixin,
+    KnowledgeTools,
+):
+    """AllTools with the dense search swapped for Jev relevance search (AllTools-Jev)."""
+
+    def __init__(
+        self,
+        db: "TransactionalDB",
+        kb_bm25_pipeline: "RetrievalPipeline",
+        kb_jev_pipeline: "RetrievalPipeline",
+        sandbox: "SandboxManager",
+    ):
+        super().__init__(db)
+        self._kb_bm25_pipeline = kb_bm25_pipeline
+        self._kb_jev_pipeline = kb_jev_pipeline
         self._sandbox = sandbox
