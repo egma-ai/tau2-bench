@@ -32,12 +32,12 @@ Requirements: **sandbox-runtime** for `shell`, and an embedding API for dense se
 | `bm25` | `KB_search` | None (offline) |
 | `openai_embeddings` | `KB_search` | `OPENAI_API_KEY` |
 | `qwen_embeddings` | `KB_search` | `OPENROUTER_API_KEY` |
-| `jev` | `KB_search` | `TYPESAFE_API_KEY` (TypeSafe Jev classifies every document's relevance to each query) |
+| `jev` | `KB_search` | `TYPESAFE_API_KEY` (TypeSafe Jev classifies every document's relevance to each query; returns every document with P(relevant) >= 0.5, best first) |
 | `terminal_use` | `shell` | `sandbox-runtime` (see below) |
 | `terminal_use_write` | `shell` | `sandbox-runtime` (see below) |
 | `alltools` | `KB_search_bm25`, `KB_search_dense`, `shell` | BM25 offline + OpenAI dense embeddings + sandbox-runtime |
 | `alltools-qwen` | `KB_search_bm25`, `KB_search_dense`, `shell` | BM25 offline + Qwen dense embeddings + sandbox-runtime |
-| `alltools-jev` | `KB_search_bm25`, `KB_search_jev`, `shell` | `alltools` with the dense search replaced by TypeSafe Jev relevance search (`TYPESAFE_API_KEY`) + sandbox-runtime |
+| `jev-shell` | `KB_search`, `shell` | `jev`'s Jev-backed `KB_search` plus the read-only shell: `TYPESAFE_API_KEY` + sandbox-runtime |
 
 The `bm25`, `openai_embeddings`, and `qwen_embeddings` configs can also be combined with:
 - `_reranker` suffix — adds an LLM reranker postprocessor (requires `OPENAI_API_KEY`)

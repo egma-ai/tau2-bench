@@ -1,11 +1,12 @@
 # Jev retrieval experiment (`banking_knowledge`)
 
-Controlled comparison of the `jev` retrieval config against existing configs. In `jev`, the
-agent has the same single `KB_search(query)` tool as `openai_embeddings` / `bm25`, but each
-search asks TypeSafe's Jev model, for every KB document in parallel, whether that document
-helps answer the query. Documents with P(relevant) >= 0.5 are returned, best first, at most
-10 (see `src/tau2/knowledge/retrievers/jev_retriever.py`). Relative to `openai_embeddings`,
-the agent-visible difference is one sentence of the system prompt.
+Does exhaustive relevance classification fix knowledge retrieval? In the `jev-shell` config
+the agent keeps the leaderboard's read-only `shell` but its other search tools (BM25 and
+OpenAI-embedding search) are replaced by one `KB_search(query)` tool: every KB document is
+sent to TypeSafe's Jev model in parallel as a yes/no "is this relevant to the question?"
+call, and every document with P(relevant) >= 0.5 is returned, most confident first, with no
+cap (see `src/tau2/knowledge/retrievers/jev_retriever.py`). `jev` is the same search tool
+without `shell`.
 
 ## Setup
 
@@ -41,24 +42,24 @@ as a go/no-go check and to sanity-check the cap; do not tune settings on agent p
 
 ## 3. Agent runs
 
-Same settings for every arm (leaderboard defaults: user simulator gpt-5.2 at low reasoning,
-seed 300, all 97 tasks, 4 trials); only `--retrieval-config` changes:
+Leaderboard settings (user simulator gpt-5.2 at low reasoning, seed 300, all 97 tasks); only
+`--retrieval-config` changes between arms. First run: GPT-6.1 Sol at xhigh effort (agent
+arguments mirror the published GPT-5.6 Sol leaderboard run), one trial:
 
 ```bash
-for config in jev openai_embeddings golden_retrieval; do
-  tau2 run --domain banking_knowledge --retrieval-config $config \
-    --agent-llm <agent_model> --agent-llm-args '<agent_args_json>' \
-    --user-llm gpt-5.2 --user-llm-args '{"reasoning_effort": "low"}' \
-    --num-trials 4 --seed 300 --max-concurrency 20 --save-to jev_exp_$config
-done
+tau2 run --domain banking_knowledge --retrieval-config jev-shell \
+  --agent-llm openai/responses/gpt-6.1-sol \
+  --agent-llm-args '{"extra_body": {"reasoning_effort": "xhigh"}, "allowed_openai_params": ["tool_choice"]}' \
+  --user-llm gpt-5.2 --user-llm-args '{"reasoning_effort": "low"}' \
+  --num-trials 1 --seed 300 --max-concurrency 10 --save-to jev_shell_gpt-6.1-sol
 ```
 
-- `jev`: treatment.
-- `openai_embeddings`: matched control (same tool, embedding backend).
-- `alltools`: leaderboard reference; reuse published trajectories when the agent model has a
-  leaderboard submission, else run it too (needs sandbox-runtime, see
-  `src/tau2/knowledge/README.md`).
-- `golden_retrieval`: optional ceiling (required documents given in the prompt).
+- `jev-shell`: treatment (Jev `KB_search` + `shell`).
+- `alltools`: baseline, the leaderboard config (BM25 + OpenAI-embedding search + `shell`);
+  needed for models without a published leaderboard run.
+- `jev`: Jev `KB_search` only.
+- Jev calls are paced process-wide at `TYPESAFE_MAX_RPS` (default 75 requests/s).
+- `shell` needs sandbox-runtime (see `src/tau2/knowledge/README.md`).
 
-With 4 trials, differences of roughly 5–6 points of pass^1 are detectable; analyse pass^1
-paired by task. Run `required_doc_recall.py` on every arm's `results.json` as well.
+One trial detects differences of roughly 11+ points of pass^1; four trials roughly 5-6.
+Run `required_doc_recall.py` on every arm's `results.json` as well.

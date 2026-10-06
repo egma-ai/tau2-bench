@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 from tau2.domains.banking_knowledge.retrieval_mixins import (
     GrepMixin,
     KBSearchBm25AllToolsMixin,
+    KBSearchClassifierMixin,
     KBSearchDenseAllToolsMixin,
-    KBSearchJevAllToolsMixin,
     KBSearchMixin,
     ShellMixin,
 )
@@ -50,6 +50,36 @@ class KnowledgeToolsWithKBSearch(KBSearchMixin, KnowledgeTools):
     def __init__(self, db: "TransactionalDB", kb_pipeline: "RetrievalPipeline"):
         super().__init__(db)
         self._kb_pipeline = kb_pipeline
+
+
+class KnowledgeToolsWithClassifierSearch(KBSearchClassifierMixin, KnowledgeTools):
+    """Base banking tools + classifier-backed KB_search.
+
+    Used by: jev.
+    """
+
+    def __init__(self, db: "TransactionalDB", kb_pipeline: "RetrievalPipeline"):
+        super().__init__(db)
+        self._kb_pipeline = kb_pipeline
+
+
+class KnowledgeToolsWithClassifierSearchAndShell(
+    KBSearchClassifierMixin, ShellMixin, KnowledgeTools
+):
+    """Base banking tools + classifier-backed KB_search + read-only shell.
+
+    Used by: jev-shell.
+    """
+
+    def __init__(
+        self,
+        db: "TransactionalDB",
+        kb_pipeline: "RetrievalPipeline",
+        sandbox: "SandboxManager",
+    ):
+        super().__init__(db)
+        self._kb_pipeline = kb_pipeline
+        self._sandbox = sandbox
 
 
 class KnowledgeToolsWithGrep(GrepMixin, KnowledgeTools):
@@ -110,25 +140,4 @@ class KnowledgeToolsAllTools(
         super().__init__(db)
         self._kb_bm25_pipeline = kb_bm25_pipeline
         self._kb_dense_pipeline = kb_dense_pipeline
-        self._sandbox = sandbox
-
-
-class KnowledgeToolsAllToolsJev(
-    KBSearchBm25AllToolsMixin,
-    KBSearchJevAllToolsMixin,
-    ShellMixin,
-    KnowledgeTools,
-):
-    """AllTools with the dense search swapped for Jev relevance search (AllTools-Jev)."""
-
-    def __init__(
-        self,
-        db: "TransactionalDB",
-        kb_bm25_pipeline: "RetrievalPipeline",
-        kb_jev_pipeline: "RetrievalPipeline",
-        sandbox: "SandboxManager",
-    ):
-        super().__init__(db)
-        self._kb_bm25_pipeline = kb_bm25_pipeline
-        self._kb_jev_pipeline = kb_jev_pipeline
         self._sandbox = sandbox

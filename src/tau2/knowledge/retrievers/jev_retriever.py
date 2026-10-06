@@ -3,11 +3,13 @@
 Instead of ranking a precomputed index, every document is sent to Jev together
 with the query as an independent yes/no ("noul") question, all in parallel.
 Documents whose probability of being relevant clears ``threshold`` are returned,
-highest probability first. API reference: https://docs.typesafe.ai/api
+highest probability first (optionally capped at ``top_k``).
+API reference: https://docs.typesafe.ai/api
 """
 
 import os
 import random
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,6 +38,26 @@ RELEVANCE_QUESTION = {
 }
 
 
+class _RequestPacer:
+    """Spaces out requests process-wide (tau2 runs simulations as threads)."""
+
+    def __init__(self, per_second: float):
+        self.interval = 1.0 / per_second
+        self.lock = threading.Lock()
+        self.next_slot = time.monotonic()
+
+    def wait(self) -> None:
+        with self.lock:
+            now = time.monotonic()
+            slot = max(now, self.next_slot)
+            self.next_slot = slot + self.interval
+        time.sleep(slot - now)
+
+
+# Jev's documented limit is 80 requests/s per account; stay just under it.
+_PACER = _RequestPacer(float(os.getenv("TYPESAFE_MAX_RPS", "75")))
+
+
 def _retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
     """Honor the server's retry-after headers, else use jittered exponential backoff."""
     if response is not None:
@@ -53,7 +75,7 @@ class JevRetriever(BaseRetriever):
         self,
         query_key: str = "query",
         content_state_key: str = "doc_content_map",
-        top_k: int = 10,
+        top_k: Optional[int] = 10,
         threshold: float = 0.5,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
@@ -99,6 +121,7 @@ class JevRetriever(BaseRetriever):
         for attempt in range(self.max_retries + 1):
             response = None
             try:
+                _PACER.wait()
                 response = self.client.post(self.api_url, json=payload, headers=headers)
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     response.raise_for_status()
@@ -136,4 +159,4 @@ class JevRetriever(BaseRetriever):
             if self._cache[(query, doc_id)] >= self.threshold
         ]
         results.sort(key=lambda x: x[1], reverse=True)
-        return results[: self.top_k]
+        return results if self.top_k is None else results[: self.top_k]

@@ -33,7 +33,7 @@ def main():
     ap.add_argument("--sims", type=int, default=30)
     ap.add_argument("--out", default="phase0.jsonl")
     ap.add_argument("--threshold", type=float, default=0.5)
-    ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--top-k", type=int, default=None, help="cap (default: none)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -107,8 +107,7 @@ def main():
     )
     print(
         f"docs with P>={args.threshold} per query: median {statistics.median(n_above)}, "
-        f"p90 {sorted(n_above)[int(0.9 * len(n_above))]}, share of queries over cap "
-        f"{sum(n > args.top_k for n in n_above) / len(n_above):.2f}"
+        f"p90 {sorted(n_above)[int(0.9 * len(n_above))]}, max {max(n_above)}"
     )
     if latencies:
         print(f"seconds per 698-doc search: median {statistics.median(latencies):.1f}")

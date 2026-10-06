@@ -35,9 +35,9 @@ requires_sandbox_runtime = pytest.mark.skipif(
     shutil.which("srt") is None,
     reason="sandbox-runtime (srt) is not installed",
 )
-requires_all_tools_jev_deps = pytest.mark.skipif(
+requires_jev_shell_deps = pytest.mark.skipif(
     not os.environ.get("TYPESAFE_API_KEY") or shutil.which("srt") is None,
-    reason="alltools-jev requires TYPESAFE_API_KEY and sandbox-runtime (srt)",
+    reason="jev-shell requires TYPESAFE_API_KEY and sandbox-runtime (srt)",
 )
 requires_all_tools_deps = pytest.mark.skipif(
     not os.environ.get("OPENAI_API_KEY") or shutil.which("srt") is None,
@@ -132,15 +132,11 @@ _ALL_VARIANTS = [
     ("openai_embeddings_grep", {"KB_search", "grep"}, "openai"),
     ("openai_embeddings_reranker_grep", {"KB_search", "grep"}, "openai"),
     ("jev", {"KB_search"}, "typesafe"),
+    ("jev-shell", {"KB_search", "shell"}, "jev_shell"),
     (
         "alltools",
         {"KB_search_bm25", "KB_search_dense", "shell"},
         "all_tools",
-    ),
-    (
-        "alltools-jev",
-        {"KB_search_bm25", "KB_search_jev", "shell"},
-        "all_tools_jev",
     ),
 ]
 
@@ -156,8 +152,8 @@ def _api_mark(gate):
         return requires_sandbox_runtime
     if gate == "all_tools":
         return requires_all_tools_deps
-    if gate == "all_tools_jev":
-        return requires_all_tools_jev_deps
+    if gate == "jev_shell":
+        return requires_jev_shell_deps
     return pytest.mark.skipif(False, reason="")
 
 
@@ -236,7 +232,6 @@ class TestAllVariantsToolPresence:
             "KB_search",
             "KB_search_bm25",
             "KB_search_dense",
-            "KB_search_jev",
             "grep",
             "shell",
         }
@@ -268,7 +263,11 @@ class TestAllVariantsToolInvocation:
         assert "Mortgage Lending Policy" in output.split("\n")[0]
         assert "Score:" in output
 
-    @pytest.mark.parametrize("variant_name", _KB_SEARCH_VARIANTS)
+    # Rankers always fill top-5; the Jev classifier drops documents below 0.5.
+    @pytest.mark.parametrize(
+        "variant_name",
+        [p for p in _KB_SEARCH_VARIANTS if not p.values[0].startswith("jev")],
+    )
     def test_kb_search_returns_all_docs_at_top5(self, variant_name):
         toolkit = _build_toolkit(variant_name, top_k=5)
         output = toolkit.KB_search(query="account fee interest")

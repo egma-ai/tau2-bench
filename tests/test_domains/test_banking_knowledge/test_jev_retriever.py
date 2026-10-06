@@ -106,16 +106,25 @@ def test_empty_query_makes_no_requests():
     assert retriever.retrieve({"query": "  "}, STATE) == []
 
 
-def test_alltools_jev_swaps_only_the_dense_tool():
+def test_no_cap_returns_every_doc_above_threshold():
+    retriever = _retriever(_answer, top_k=None, threshold=0.5)
+    assert retriever.retrieve({"query": "fee"}, STATE) == [
+        ("doc_fee", 0.97),
+        ("doc_apy", 0.62),
+    ]
+
+
+KB_SEARCH_DESCRIPTION = (
+    "Search the knowledge base by having a zero-shot classifier model look at every "
+    "document to check if it's relevant to the given question."
+)
+
+
+def _build(variant_name: str):
     from unittest.mock import MagicMock, patch
 
     from tau2.domains.banking_knowledge.data_model import TransactionalDB
-    from tau2.domains.banking_knowledge.environment import get_knowledge_base
-    from tau2.domains.banking_knowledge.retrieval import (
-        build_policy,
-        build_tools,
-        resolve_variant,
-    )
+    from tau2.domains.banking_knowledge.retrieval import build_tools, resolve_variant
 
     docs = [
         {"id": d, "title": STATE["doc_title_map"][d], "text": text}
@@ -129,20 +138,39 @@ def test_alltools_jev_swaps_only_the_dense_tool():
         patch("tau2.domains.banking_knowledge.retrieval._create_sandbox"),
     ):
         tools = build_tools(
-            resolve_variant("alltools-jev"), MagicMock(spec=TransactionalDB), None
+            resolve_variant(variant_name), MagicMock(spec=TransactionalDB), None
         )
-    assert {"KB_search_bm25", "KB_search_jev", "shell"} <= set(tools.get_tools())
-    assert not tools.has_tool("KB_search_dense")
-
-    retriever = tools._kb_jev_pipeline.retrievers[0]
+    retriever = tools._kb_pipeline.retrievers[0]
     retriever.api_key = "test-key"
     retriever.client = httpx.Client(transport=httpx.MockTransport(_answer))
-    output = tools.KB_search_jev(query="annual fee", k=1)
-    assert output.startswith("1. Gold Card Fees") and "Savings Rates" not in output
+    return tools
 
-    kb = get_knowledge_base()
-    alltools = build_policy(resolve_variant("alltools"), kb).splitlines()
-    alltools_jev = build_policy(resolve_variant("alltools-jev"), kb).splitlines()
-    changed = [(a, b) for a, b in zip(alltools, alltools_jev) if a != b]
-    assert len(alltools) == len(alltools_jev) and len(changed) == 2
-    assert all("KB_search_dense" in a and "KB_search_jev" in b for a, b in changed)
+
+def test_jev_shell_has_classifier_search_and_shell_only():
+    from tau2.domains.banking_knowledge.environment import get_knowledge_base
+    from tau2.domains.banking_knowledge.retrieval import build_policy, resolve_variant
+
+    tools = _build("jev-shell")
+    names = set(tools.get_tools())
+    assert {"KB_search", "shell"} <= names
+    assert not names & {"KB_search_bm25", "KB_search_dense", "grep"}
+    schema = tools.get_tools()["KB_search"].openai_schema["function"]
+    assert schema["description"] == KB_SEARCH_DESCRIPTION
+    assert set(schema["parameters"]["properties"]) == {"query"}
+
+    output = tools.KB_search(query="annual fee")
+    assert output.startswith("1. Gold Card Fees") and "2. Savings Rates" in output
+    assert "Wire Transfers" not in output
+
+    policy = build_policy(resolve_variant("jev-shell"), get_knowledge_base())
+    assert "You have two complementary ways" in policy
+    assert KB_SEARCH_DESCRIPTION in policy and "### `shell`" in policy
+
+
+def test_jev_has_classifier_search_without_shell():
+    tools = _build("jev")
+    assert tools.has_tool("KB_search") and not tools.has_tool("shell")
+    assert (
+        tools.get_tools()["KB_search"].openai_schema["function"]["description"]
+        == KB_SEARCH_DESCRIPTION
+    )

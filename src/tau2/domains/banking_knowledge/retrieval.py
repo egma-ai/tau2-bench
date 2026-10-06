@@ -31,8 +31,9 @@ from typing import (
 from tau2.domains.banking_knowledge.data_model import KnowledgeBase, TransactionalDB
 from tau2.domains.banking_knowledge.retrieval_toolkits import (
     KnowledgeToolsAllTools,
-    KnowledgeToolsAllToolsJev,
     KnowledgeToolsPlain,
+    KnowledgeToolsWithClassifierSearch,
+    KnowledgeToolsWithClassifierSearchAndShell,
     KnowledgeToolsWithGrep,
     KnowledgeToolsWithKBSearch,
     KnowledgeToolsWithKBSearchAndGrep,
@@ -266,7 +267,7 @@ def create_grep_retrieval_pipeline(
 
 def create_jev_retrieval_pipeline(
     knowledge_base: KnowledgeBase,
-    top_k: int = 10,
+    top_k: Optional[int] = None,
 ) -> "RetrievalPipeline":
     from tau2.knowledge.pipeline import RetrievalPipeline
 
@@ -321,7 +322,7 @@ class PipelineSpec:
     type: Literal["embedding", "bm25", "jev"]
     embedder_type: Optional[str] = None  # e.g. "openrouter"
     embedder_model: Optional[str] = None  # e.g. "qwen3-embedding-8b"
-    top_k: int = 10
+    top_k: Optional[int] = 10  # None -> no cap (jev only)
     reranker: bool = False
     reranker_min_score: int = 5
 
@@ -420,7 +421,6 @@ class RetrievalVariant:
     kb_search: Optional[PipelineSpec] = None  # None -> no KB_search tool
     kb_search_bm25: Optional[PipelineSpec] = None  # AllTools: BM25 KB_search_bm25
     kb_search_dense: Optional[PipelineSpec] = None  # AllTools: dense KB_search_dense
-    kb_search_jev: Optional[PipelineSpec] = None  # AllTools-Jev: Jev KB_search_jev
     grep: Optional[GrepSpec] = None  # None -> no grep tool
     shell: Optional[ShellSpec] = None  # None -> no shell tool
     supports_top_k: bool = False
@@ -598,8 +598,14 @@ RETRIEVAL_VARIANTS: Dict[str, RetrievalVariant] = {
         name="jev",
         prompt_template=PROMPTS_DIR / "classic_rag_jev_no_grep.md",
         build_prompt=standard_prompt,
-        kb_search=PipelineSpec(type="jev"),
-        supports_top_k=True,
+        kb_search=PipelineSpec(type="jev", top_k=None),
+    ),
+    "jev-shell": RetrievalVariant(
+        name="jev-shell",
+        prompt_template=PROMPTS_DIR / "jev_shell.md",
+        build_prompt=standard_prompt,
+        kb_search=PipelineSpec(type="jev", top_k=None),
+        shell=ShellSpec(allow_writes=False),
     ),
     "grep_only": RetrievalVariant(
         name="grep_only",
@@ -629,15 +635,6 @@ RETRIEVAL_VARIANTS: Dict[str, RetrievalVariant] = {
         "alltools-qwen",
         embedder_type="openrouter",
         embedder_model=DEFAULT_DENSE_EMBEDDING_MODEL_OPENROUTER,
-    ),
-    # AllTools with KB_search_dense (embeddings) swapped for KB_search_jev.
-    "alltools-jev": RetrievalVariant(
-        name="alltools-jev",
-        prompt_template=PROMPTS_DIR / "all_tools_jev.md",
-        build_prompt=standard_prompt,
-        kb_search_bm25=PipelineSpec(type="bm25"),
-        kb_search_jev=PipelineSpec(type="jev"),
-        shell=ShellSpec(allow_writes=False),
     ),
 }
 
@@ -706,8 +703,6 @@ def resolve_variant(
         variant.kb_search_bm25.top_k = top_k
     if top_k is not None and variant.kb_search_dense is not None:
         variant.kb_search_dense.top_k = top_k
-    if top_k is not None and variant.kb_search_jev is not None:
-        variant.kb_search_jev.top_k = top_k
     if grep_top_k is not None and variant.grep is not None:
         variant.grep.top_k = grep_top_k
     if case_sensitive is not None and variant.grep is not None:
@@ -802,12 +797,7 @@ def build_tools(
         and variant.kb_search_dense is not None
         and variant.shell is not None
     )
-    if variant.kb_search_jev is not None:
-        bm25_pipeline = _create_kb_pipeline(variant.kb_search_bm25, knowledge_base)
-        jev_pipeline = _create_kb_pipeline(variant.kb_search_jev, knowledge_base)
-        sandbox = _create_sandbox(knowledge_base, variant.shell)
-        tools = KnowledgeToolsAllToolsJev(db, bm25_pipeline, jev_pipeline, sandbox)
-    elif has_all_tools:
+    if has_all_tools:
         bm25_pipeline = _create_kb_pipeline(variant.kb_search_bm25, knowledge_base)
         dense_pipeline = _create_kb_pipeline(variant.kb_search_dense, knowledge_base)
         sandbox = _create_sandbox(knowledge_base, variant.shell)
@@ -817,7 +807,16 @@ def build_tools(
         has_grep = variant.grep is not None
         has_shell = variant.shell is not None
 
-        if has_shell:
+        if has_kb and variant.kb_search.type == "jev":
+            kb_pipeline = _create_kb_pipeline(variant.kb_search, knowledge_base)
+            if has_shell:
+                sandbox = _create_sandbox(knowledge_base, variant.shell)
+                tools = KnowledgeToolsWithClassifierSearchAndShell(
+                    db, kb_pipeline, sandbox
+                )
+            else:
+                tools = KnowledgeToolsWithClassifierSearch(db, kb_pipeline)
+        elif has_shell:
             sandbox = _create_sandbox(knowledge_base, variant.shell)
             tools = KnowledgeToolsWithShell(db, sandbox)
         elif has_kb and has_grep:
