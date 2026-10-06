@@ -1,12 +1,14 @@
 """Exhaustive relevance-classification retriever backed by TypeSafe's Jev model.
 
-Instead of ranking a precomputed index, every document is sent to Jev together
-with the query as an independent yes/no ("noul") question, all in parallel.
-Documents whose probability of being relevant clears ``threshold`` are returned,
-highest probability first (optionally capped at ``top_k``).
-API reference: https://docs.typesafe.ai/api
+Instead of ranking a precomputed index, every document is checked by Jev with an
+independent yes/no ("noul") relevance question. Documents are sent in batches of
+``batch_size``: one request carries the query plus ``batch_size`` documents in its
+state and asks one question per document; batches run in parallel. Documents whose
+probability of being relevant clears ``threshold`` are returned, highest probability
+first (optionally capped at ``top_k``). API reference: https://docs.typesafe.ai/api
 """
 
+import json
 import os
 import random
 import threading
@@ -24,38 +26,54 @@ DEFAULT_JEV_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_JEV_MODEL = "jev-1.13.0"
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504, 529}
 
-# Same relevance definition as the pointwise LLM reranker's prompt.
-RELEVANCE_QUESTION = {
-    "type": "noul",
-    "instructions": "Does `document` contain information that helps answer or address `query`?",
-    "criteria": {
-        "true": "The document contains information that helps answer or address the query.",
-        "false": (
-            "The document does not contain information that helps answer the query, "
-            "even if it mentions similar topics."
+
+def relevance_question(ref: str) -> Dict[str, Any]:
+    """Noul question about the document at state path ``ref`` (e.g. ``documents[3]``).
+
+    Same relevance definition as the pointwise LLM reranker's prompt.
+    """
+    return {
+        "type": "noul",
+        "instructions": (
+            f"Does `{ref}` contain information that helps answer or address `query`?"
         ),
-    },
-}
+        "criteria": {
+            "true": f"`{ref}` contains information that helps answer or address the query.",
+            "false": (
+                f"`{ref}` does not contain information that helps answer the query, "
+                "even if it mentions similar topics."
+            ),
+        },
+    }
 
 
 class _RequestPacer:
-    """Spaces out requests process-wide (tau2 runs simulations as threads)."""
+    """Spaces out requests process-wide (tau2 runs simulations as threads).
 
-    def __init__(self, per_second: float):
-        self.interval = 1.0 / per_second
+    Each request waits for a slot sized by whichever limit it would hit first:
+    requests per second or (estimated) input tokens per second.
+    """
+
+    def __init__(self, requests_per_s: float, tokens_per_s: float):
+        self.requests_per_s = requests_per_s
+        self.tokens_per_s = tokens_per_s
         self.lock = threading.Lock()
         self.next_slot = time.monotonic()
 
-    def wait(self) -> None:
+    def wait(self, est_tokens: float) -> None:
+        cost = max(1.0 / self.requests_per_s, est_tokens / self.tokens_per_s)
         with self.lock:
             now = time.monotonic()
             slot = max(now, self.next_slot)
-            self.next_slot = slot + self.interval
+            self.next_slot = slot + cost
         time.sleep(slot - now)
 
 
-# Jev's documented limit is 80 requests/s per account; stay just under it.
-_PACER = _RequestPacer(float(os.getenv("TYPESAFE_MAX_RPS", "75")))
+# Jev's documented limits are 80 requests/s and 100K tokens/s per account; stay under.
+_PACER = _RequestPacer(
+    float(os.getenv("TYPESAFE_MAX_RPS", "75")),
+    float(os.getenv("TYPESAFE_MAX_TPS", "90000")),
+)
 
 
 def _retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
@@ -77,6 +95,7 @@ class JevRetriever(BaseRetriever):
         content_state_key: str = "doc_content_map",
         top_k: Optional[int] = 10,
         threshold: float = 0.5,
+        batch_size: int = 50,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -90,6 +109,7 @@ class JevRetriever(BaseRetriever):
             content_state_key=content_state_key,
             top_k=top_k,
             threshold=threshold,
+            batch_size=batch_size,
             model=model,
             **kwargs,
         )
@@ -97,6 +117,7 @@ class JevRetriever(BaseRetriever):
         self.content_state_key = content_state_key
         self.top_k = top_k
         self.threshold = threshold
+        self.batch_size = batch_size
         self.model = model or os.getenv("TYPESAFE_DEFAULT_MODEL", DEFAULT_JEV_MODEL)
         base_url = base_url or os.getenv("TYPESAFE_BASE_URL", DEFAULT_JEV_BASE_URL)
         self.api_url = f"{base_url.rstrip('/')}/v1/systemone"
@@ -109,23 +130,33 @@ class JevRetriever(BaseRetriever):
         # (query, doc_id) -> P(relevant); repeated identical searches are free.
         self._cache: Dict[Tuple[str, str], float] = {}
 
-    def _classify(self, query: str, title: str, content: str) -> float:
-        """Return Jev's probability that the document is relevant to the query."""
+    def _classify_batch(self, query: str, docs: List[Tuple[str, str]]) -> List[float]:
+        """Return Jev's P(relevant) for each (title, content) document, in one request."""
         payload = {
             "model": self.model,
-            "state": {"query": query, "document": {"title": title, "content": content}},
-            "questions": {"relevant": RELEVANCE_QUESTION},
+            "state": {
+                "query": query,
+                "documents": [{"title": t, "content": c} for t, c in docs],
+            },
+            "questions": {
+                f"doc_{i}": relevance_question(f"documents[{i}]")
+                for i in range(len(docs))
+            },
         }
+        est_tokens = len(json.dumps(payload, ensure_ascii=False)) / 3
         headers = {"Authorization": f"Bearer {self.api_key}"}
         response = None
         for attempt in range(self.max_retries + 1):
             response = None
             try:
-                _PACER.wait()
+                _PACER.wait(est_tokens)
                 response = self.client.post(self.api_url, json=payload, headers=headers)
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     response.raise_for_status()
-                    return float(response.json()["answers"]["relevant"]["noul"])
+                    answers = response.json()["answers"]
+                    return [
+                        float(answers[f"doc_{i}"]["noul"]) for i in range(len(docs))
+                    ]
             except httpx.TransportError:
                 pass
             if attempt < self.max_retries:
@@ -144,19 +175,26 @@ class JevRetriever(BaseRetriever):
 
         contents = state[self.content_state_key]
         titles = state.get("doc_title_map", {})
-        pending = [doc_id for doc_id in contents if (query, doc_id) not in self._cache]
+        # Sorted so batch composition doesn't depend on filesystem order.
+        pending = sorted(d for d in contents if (query, d) not in self._cache)
+        batches = [
+            pending[i : i + self.batch_size]
+            for i in range(0, len(pending), self.batch_size)
+        ]
 
-        def classify(doc_id: str) -> float:
-            return self._classify(query, titles.get(doc_id, doc_id), contents[doc_id])
+        def classify(batch: List[str]) -> List[float]:
+            docs = [(titles.get(doc_id, doc_id), contents[doc_id]) for doc_id in batch]
+            return self._classify_batch(query, docs)
 
         with ThreadPoolExecutor(max_workers=self.max_concurrency) as executor:
-            for doc_id, prob in zip(pending, executor.map(classify, pending)):
-                self._cache[(query, doc_id)] = prob
+            for batch, probs in zip(batches, executor.map(classify, batches)):
+                for doc_id, prob in zip(batch, probs):
+                    self._cache[(query, doc_id)] = prob
 
         results = [
             (doc_id, self._cache[(query, doc_id)])
             for doc_id in contents
             if self._cache[(query, doc_id)] >= self.threshold
         ]
-        results.sort(key=lambda x: x[1], reverse=True)
+        results.sort(key=lambda x: (-x[1], x[0]))
         return results if self.top_k is None else results[: self.top_k]

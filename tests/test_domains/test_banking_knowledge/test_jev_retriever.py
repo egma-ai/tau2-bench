@@ -33,10 +33,11 @@ def _retriever(handler, **kwargs) -> JevRetriever:
 
 def _answer(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
-    prob = PROBS[body["state"]["document"]["title"]]
-    return httpx.Response(
-        200, json={"answers": {"relevant": {"type": "noul", "noul": prob}}}
-    )
+    answers = {
+        f"doc_{i}": {"type": "noul", "noul": PROBS[doc["title"]]}
+        for i, doc in enumerate(body["state"]["documents"])
+    }
+    return httpx.Response(200, json={"answers": answers})
 
 
 def test_returns_docs_above_threshold_ranked_by_probability():
@@ -59,13 +60,30 @@ def test_request_payload_shape():
         return _answer(request)
 
     _retriever(handler).retrieve({"query": "annual fee"}, STATE)
-    assert len(requests) == len(STATE["doc_content_map"])
+    assert len(requests) == 1  # all three documents fit in one batch of 50
     body = json.loads(requests[0].content)
     assert requests[0].headers["Authorization"] == "Bearer test-key"
     assert body["model"] == "jev-1.13.0"
     assert body["state"]["query"] == "annual fee"
-    assert set(body["state"]["document"]) == {"title", "content"}
-    assert body["questions"]["relevant"]["type"] == "noul"
+    # Batched in document-ID order: doc_apy, doc_fee, doc_wire.
+    titles = [d["title"] for d in body["state"]["documents"]]
+    assert titles == ["Savings Rates", "Gold Card Fees", "Wire Transfers"]
+    assert set(body["state"]["documents"][0]) == {"title", "content"}
+    assert set(body["questions"]) == {"doc_0", "doc_1", "doc_2"}
+    assert body["questions"]["doc_2"]["type"] == "noul"
+    assert "`documents[2]`" in body["questions"]["doc_2"]["instructions"]
+
+
+def test_documents_are_split_into_batches():
+    sizes = []
+
+    def handler(request):
+        sizes.append(len(json.loads(request.content)["state"]["documents"]))
+        return _answer(request)
+
+    results = _retriever(handler, batch_size=2).retrieve({"query": "fee"}, STATE)
+    assert sorted(sizes) == [1, 2]
+    assert results == [("doc_fee", 0.97), ("doc_apy", 0.62)]
 
 
 def test_retries_rate_limited_requests():
@@ -79,7 +97,7 @@ def test_retries_rate_limited_requests():
 
     results = _retriever(handler, max_concurrency=1).retrieve({"query": "fee"}, STATE)
     assert results[0] == ("doc_fee", 0.97)
-    assert calls["n"] == len(STATE["doc_content_map"]) + 1
+    assert calls["n"] == 2  # one batch, retried once
 
 
 def test_non_retryable_error_raises():
@@ -98,7 +116,7 @@ def test_repeated_query_is_served_from_cache():
     retriever = _retriever(handler)
     first = retriever.retrieve({"query": "fee"}, STATE)
     assert retriever.retrieve({"query": "fee"}, STATE) == first
-    assert calls["n"] == len(STATE["doc_content_map"])
+    assert calls["n"] == 1
 
 
 def test_empty_query_makes_no_requests():
