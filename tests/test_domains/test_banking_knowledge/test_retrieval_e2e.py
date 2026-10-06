@@ -27,6 +27,10 @@ requires_openrouter = pytest.mark.skipif(
     not os.environ.get("OPENROUTER_API_KEY"),
     reason="OPENROUTER_API_KEY not set",
 )
+requires_typesafe = pytest.mark.skipif(
+    not os.environ.get("TYPESAFE_API_KEY"),
+    reason="TYPESAFE_API_KEY not set",
+)
 requires_sandbox_runtime = pytest.mark.skipif(
     shutil.which("srt") is None,
     reason="sandbox-runtime (srt) is not installed",
@@ -123,6 +127,7 @@ _ALL_VARIANTS = [
     ("openai_embeddings_reranker", {"KB_search"}, "openai"),
     ("openai_embeddings_grep", {"KB_search", "grep"}, "openai"),
     ("openai_embeddings_reranker_grep", {"KB_search", "grep"}, "openai"),
+    ("jev", {"KB_search"}, "typesafe"),
     (
         "alltools",
         {"KB_search_bm25", "KB_search_dense", "shell"},
@@ -136,6 +141,8 @@ def _api_mark(gate):
         return requires_openrouter
     if gate == "openai":
         return requires_openai
+    if gate == "typesafe":
+        return requires_typesafe
     if gate == "sandbox_runtime":
         return requires_sandbox_runtime
     if gate == "all_tools":

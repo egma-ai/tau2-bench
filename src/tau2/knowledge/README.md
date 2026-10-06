@@ -32,6 +32,7 @@ Requirements: **sandbox-runtime** for `shell`, and an embedding API for dense se
 | `bm25` | `KB_search` | None (offline) |
 | `openai_embeddings` | `KB_search` | `OPENAI_API_KEY` |
 | `qwen_embeddings` | `KB_search` | `OPENROUTER_API_KEY` |
+| `jev` | `KB_search` | `TYPESAFE_API_KEY` (TypeSafe Jev classifies every document's relevance to each query) |
 | `terminal_use` | `shell` | `sandbox-runtime` (see below) |
 | `terminal_use_write` | `shell` | `sandbox-runtime` (see below) |
 | `alltools` | `KB_search_bm25`, `KB_search_dense`, `shell` | BM25 offline + OpenAI dense embeddings + sandbox-runtime |

@@ -21,5 +21,6 @@ def _ensure_registered():
     import tau2.knowledge.retrievers.bm25_retriever  # noqa: F401
     import tau2.knowledge.retrievers.cosine_retriever  # noqa: F401
     import tau2.knowledge.retrievers.grep_retriever  # noqa: F401
+    import tau2.knowledge.retrievers.jev_retriever  # noqa: F401
 
     _registered = True

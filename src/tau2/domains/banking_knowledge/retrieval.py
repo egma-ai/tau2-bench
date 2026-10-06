@@ -263,6 +263,25 @@ def create_grep_retrieval_pipeline(
     return pipeline
 
 
+def create_jev_retrieval_pipeline(
+    knowledge_base: KnowledgeBase,
+    top_k: int = 10,
+) -> "RetrievalPipeline":
+    from tau2.knowledge.pipeline import RetrievalPipeline
+
+    config = {
+        "document_preprocessors": [],
+        "input_preprocessors": [],
+        "retriever": {"type": "jev", "params": {"top_k": top_k}},
+        "postprocessors": [],
+    }
+
+    pipeline = RetrievalPipeline(config)
+    documents = get_or_create_docs(knowledge_base)
+    pipeline.index_documents(documents)
+    return pipeline
+
+
 # ---------------------------------------------------------------------------
 # Sandbox creation helper
 # ---------------------------------------------------------------------------
@@ -298,7 +317,7 @@ PromptBuilder = Callable[[Path, KnowledgeBase, Optional["Task"]], str]
 class PipelineSpec:
     """Specification for a KB_search pipeline."""
 
-    type: Literal["embedding", "bm25"]
+    type: Literal["embedding", "bm25", "jev"]
     embedder_type: Optional[str] = None  # e.g. "openrouter"
     embedder_model: Optional[str] = None  # e.g. "qwen3-embedding-8b"
     top_k: int = 10
@@ -573,6 +592,13 @@ RETRIEVAL_VARIANTS: Dict[str, RetrievalVariant] = {
         kb_search=PipelineSpec(type="bm25", reranker=True),
         supports_top_k=True,
     ),
+    "jev": RetrievalVariant(
+        name="jev",
+        prompt_template=PROMPTS_DIR / "classic_rag_jev_no_grep.md",
+        build_prompt=standard_prompt,
+        kb_search=PipelineSpec(type="jev"),
+        supports_top_k=True,
+    ),
     "grep_only": RetrievalVariant(
         name="grep_only",
         prompt_template=PROMPTS_DIR / "grep_only.md",
@@ -715,6 +741,10 @@ def _create_kb_pipeline(
             knowledge_base=knowledge_base,
             top_k=spec.top_k,
             postprocessors=postprocessors,
+        )
+    elif spec.type == "jev":
+        return create_jev_retrieval_pipeline(
+            knowledge_base=knowledge_base, top_k=spec.top_k
         )
     else:
         raise ValueError(f"Unknown pipeline type: {spec.type!r}")
